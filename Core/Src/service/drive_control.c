@@ -31,6 +31,17 @@ static bool TimedOut(uint32_t now_ms, uint32_t last_ms, uint32_t timeout_ms)
     return (uint32_t)(now_ms - last_ms) >= timeout_ms;
 }
 
+static void RequireFreshCommand(uint32_t now_ms)
+{
+    drive_control.source_gate_ms = now_ms;
+}
+
+static void EnterDisarmed(uint32_t now_ms)
+{
+    drive_control.state = DRIVE_STATE_DISARMED;
+    RequireFreshCommand(now_ms);
+}
+
 static bool ActiveSourceHasFreshInput(void)
 {
     if (drive_control.source == DRIVE_SOURCE_GAMEPAD)
@@ -174,11 +185,11 @@ void DriveControl_Tick(uint32_t now_ms, bool brake_wheels_stopped)
 
     if (drive_control.state == DRIVE_STATE_ARMED && ActiveSourceTimedOut(now_ms))
     {
-        drive_control.state = DRIVE_STATE_DISARMED;
+        EnterDisarmed(now_ms);
     }
     else if (drive_control.state == DRIVE_STATE_BRAKING && brake_wheels_stopped)
     {
-        drive_control.state = DRIVE_STATE_DISARMED;
+        EnterDisarmed(now_ms);
     }
     else if (drive_control.state != DRIVE_STATE_BRAKING &&
              drive_control.brake_request_pending &&
@@ -193,13 +204,14 @@ void DriveControl_Tick(uint32_t now_ms, bool brake_wheels_stopped)
             drive_control.arm_request_neutral)
         {
             drive_control.state = DRIVE_STATE_ARMED;
+            RequireFreshCommand(now_ms);
         }
         if (drive_control.state != DRIVE_STATE_BRAKING &&
             drive_control.source_request_pending &&
             drive_control.requested_source != drive_control.source)
         {
             drive_control.source = drive_control.requested_source;
-            drive_control.source_gate_ms = now_ms;
+            RequireFreshCommand(now_ms);
         }
     }
 

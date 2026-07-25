@@ -47,6 +47,11 @@ static void ArmSerial(uint32_t timestamp)
     DriveControl_RequestArm(&frame);
     DriveControl_Tick(timestamp, false);
     assert(DriveControl_GetState() == DRIVE_STATE_ARMED);
+    assert(!DriveControl_GetOutput().authorised);
+
+    command.received_ms = timestamp + 1u;
+    DriveControl_SubmitSerialCommand(&command);
+    DriveControl_Tick(timestamp + 1u, false);
     assert(DriveControl_GetOutput().authorised);
 }
 
@@ -108,7 +113,7 @@ static void TestTimeoutsApplyOnlyToActiveSource(void)
 {
     DriveControl_Init(0u);
     ArmSerial(1u);
-    DriveControl_Tick(251u, false);
+    DriveControl_Tick(252u, false);
     assert(DriveControl_GetState() == DRIVE_STATE_DISARMED);
     assert(!DriveControl_GetOutput().authorised);
 
@@ -126,6 +131,27 @@ static void TestTimeoutsApplyOnlyToActiveSource(void)
 
     DriveControl_Tick(399u, false);
     assert(DriveControl_GetState() == DRIVE_STATE_DISARMED);
+}
+
+static void TestRearmRequiresPostArmCommand(void)
+{
+    GamepadFrame arm_frame = GamepadFrameAt(253u, 128u, 127u);
+    DriveCommand command = CommandAt(254u, 0.4f, -0.2f);
+
+    DriveControl_Init(0u);
+    ArmSerial(1u);
+    DriveControl_Tick(252u, false);
+    assert(DriveControl_GetState() == DRIVE_STATE_DISARMED);
+
+    DriveControl_SubmitGamepadFrame(&arm_frame);
+    DriveControl_RequestArm(&arm_frame);
+    DriveControl_Tick(253u, false);
+    assert(DriveControl_GetState() == DRIVE_STATE_ARMED);
+    assert(!DriveControl_GetOutput().authorised);
+
+    DriveControl_SubmitSerialCommand(&command);
+    DriveControl_Tick(254u, false);
+    assert(DriveControl_GetOutput().authorised);
 }
 
 static void TestBrakingAndEstopRejectOtherRequests(void)
@@ -173,10 +199,21 @@ static void TestBrakingAndEstopRejectOtherRequests(void)
     DriveControl_Tick(7u, true);
     assert(DriveControl_GetState() == DRIVE_STATE_DISARMED);
 
-    DriveControl_LatchEmergencyStopFromISR();
-    DriveControl_RequestSource(DRIVE_SOURCE_SERIAL, 8u);
-    DriveControl_RequestArm(&neutral);
+    GamepadFrame brake_arm_frame = GamepadFrameAt(8u, 128u, 127u);
+    DriveControl_SubmitGamepadFrame(&brake_arm_frame);
+    DriveControl_RequestArm(&brake_arm_frame);
     DriveControl_Tick(8u, false);
+    assert(DriveControl_GetState() == DRIVE_STATE_ARMED);
+    assert(!DriveControl_GetOutput().authorised);
+
+    SubmitGamepad(9u, 0.2f, 0.0f);
+    DriveControl_Tick(9u, false);
+    assert(DriveControl_GetOutput().authorised);
+
+    DriveControl_LatchEmergencyStopFromISR();
+    DriveControl_RequestSource(DRIVE_SOURCE_SERIAL, 10u);
+    DriveControl_RequestArm(&brake_arm_frame);
+    DriveControl_Tick(10u, false);
     assert(DriveControl_GetState() == DRIVE_STATE_ESTOP);
     assert(!DriveControl_GetOutput().authorised);
 }
@@ -260,6 +297,7 @@ int main(void)
     TestSwitchNeedsPostSwitchCommand();
     TestArmAndSourceSwitchOrdering();
     TestTimeoutsApplyOnlyToActiveSource();
+    TestRearmRequiresPostArmCommand();
     TestBrakingAndEstopRejectOtherRequests();
     TestNeutralBandAndAxisMapping();
     TestPs2FrameValidationAndEdges();
