@@ -49,6 +49,7 @@ Core/Src/platform/bsp_can.c \
 Core/Src/platform/Joystick.c \
 Core/Src/platform/led.c \
 Core/Src/platform/ps2.c \
+Core/Src/platform/ps2_frame.c \
 Core/Src/platform/user_delay.c \
 Core/Src/platform/user_usart.c \
 Core/Src/platform/can.c \
@@ -64,6 +65,7 @@ Core/Src/platform/system_stm32f4xx.c \
 Core/Src/platform/tim.c \
 Core/Src/platform/usart.c \
 Core/Src/service/CAN_receive.c \
+Core/Src/service/drive_control.c \
 Core/Src/service/gps.c \
 Core/Src/service/Motor_Speed_pid.c \
 Core/Src/service/pid.c \

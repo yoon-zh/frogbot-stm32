@@ -42,8 +42,7 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-#define BUFFER_SIZE 19  // 根据需要设置缓冲区大小 
-char input_buffer[BUFFER_SIZE];
+char input_buffer[UART_RX_BUF_SIZE];
 
 uint8_t rx_char;
 uint16_t buffer_index = 0;
@@ -61,19 +60,9 @@ uint16_t buffer_index = 0;
 /* USER CODE BEGIN PV */
 
 
-extern int stop_flag; // KEY Button
 extern FusionAhrs ahrs;
-extern int control_mode;
-extern int brake_flag;
-
-int control_mode = 1;  // 0: 手柄控制, 1: 串口控制
-
-// volatile int new_serial_data_received = 0;
 
 int SERIAL_PERIOD_MS = 10; // 100HZ
-
-float Vcx = 0;   //   m/s 
-float Wc = 0;    //   rad/s 
 
 /* USER CODE END PV */
 
@@ -81,8 +70,7 @@ float Wc = 0;    //   rad/s
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 void Serial_Output();
-void Serial_Input(); // 函数声明
-void Serial_Control();
+void Serial_Input(const char *input_data);
 
 uint8_t DMA_RX_Buffer[DMA_RX_BUF_SIZE];
 uint8_t UART1_RX_Buffer[UART_RX_BUF_SIZE];
@@ -120,6 +108,7 @@ int main(void)
 
   /* Configure the system clock */
   SystemClock_Config();
+  DriveControl_Init(HAL_GetTick());
 
   /* USER CODE BEGIN SysInit */
   
@@ -144,8 +133,6 @@ int main(void)
 
   Init_all();
   clrStruct();
-  
-  TaskAdd(Serial_Control, 100); // 100Hz
   
   TaskAdd(Serial_Output, SERIAL_PERIOD_MS); // 100Hz Serial
  
@@ -173,23 +160,19 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-    // led_green_start();
+    TaskRun();
 
-    if(stop_flag)  // Stop Driving when stop_flag is true
+    if (new_serial_data_received)
     {
-      Emergency_Stop_Output();
-      led_red_start();
-      HAL_Delay(5);
-    }
-    else
-    {
-        TaskRun();
+      uint16_t input_size = UART1_RX_Size;
 
-        if (new_serial_data_received) {
-          new_serial_data_received = 0;
-          Serial_Input((char*)UART1_RX_Buffer);
-          usart_printf("Received: %s\r\n", UART1_RX_Buffer);
+      new_serial_data_received = 0;
+      if (input_size >= UART_RX_BUF_SIZE)
+      {
+        input_size = UART_RX_BUF_SIZE - 1u;
       }
+      UART1_RX_Buffer[input_size] = '\0';
+      Serial_Input((const char *)UART1_RX_Buffer);
     }
   }
 
@@ -334,121 +317,33 @@ void Serial_Output(){
 //   PrintGpsBuffer();
 }
 
-#define MAX_RETRIES 1  // 最大重试次数
-#define RETRY_TIMEOUT_MS 3  // 每次重试的超时时间，单位毫秒
-
-char failed_input_buffer[BUFFER_SIZE];  // 用于存储解析失败的输入数据
-char record_input_buffer[BUFFER_SIZE];
-// void Serial_Input(const char* input_data)
-// {
-//     if (control_mode == 1)
-//     {
-//         float temp_vcx, temp_wc;
-//         int retries = 0;  // 重试次数
-//         // 尝试解析输入数据
-//         while (retries < MAX_RETRIES) {
-//             if (sscanf(input_data, "vcx=%f,wc=%f", &temp_vcx, &temp_wc) == 2) {
-//                 // 如果解析成功，更新Vcx和Wc
-//                 Vcx = temp_vcx;
-//                 Wc = temp_wc;
-//                 return;  // 解析成功，退出函数
-//             } else {
-//                 // 如果解析失败，增加重试次数并等待
-
-//                 retries++;
-
-//                 // 将失败的输入数据存入失败缓冲区，以便监视
-//                 snprintf(failed_input_buffer, sizeof(failed_input_buffer), "Failed input: %s", input_data);
-                
-//                 // 可选择在串口打印失败的输入数据，方便调试
-//                 // usart_printf("Failed to parse input after %d retries: %s\n", retries, failed_input_buffer);
-
-//                 HAL_Delay(RETRY_TIMEOUT_MS);  // 等待指定时间后重新尝试
-//             }
-//         }
-//         led_green_start();
-//         // 如果重试次数用尽，表示解析失败
-//         usart_printf("Failed to parse input after %d retries: %s\n", retries, input_data);
-//     }
-// }
-
-
-// void Serial_Input(const char* input_data)
-// {
-//     if (control_mode == 1)
-//     {   
-//         led_green_start();
-//         float temp_vcx, temp_wc;
-//         int retries = 0;  // 重试次数
-
-//         // 尝试解析输入数据
-//         while (retries < MAX_RETRIES) {
-//             if (sscanf(input_data, "vcx=%f,wc=%f", &temp_vcx, &temp_wc) == 2) {
-//                 // 如果解析成功，更新 Vcx 和 Wc
-//                 Vcx = temp_vcx;
-//                 Wc = temp_wc;
-//                 return;  // 解析成功，退出函数
-//             } else {
-//                 retries++;
-//                 HAL_Delay(RETRY_TIMEOUT_MS);  // 等待指定时间后重新尝试
-//             }
-//         }
-//         // 如果解析失败，打印错误信息
-//         snprintf(failed_input_buffer, sizeof(failed_input_buffer), "Failed input: %s", input_data);
-//         usart_printf("Failed to parse input after %d retries: %s\n", retries, input_data);
-//     }
-// }
-
-void Serial_Input(const char* input_data)
+void Serial_Input(const char *input_data)
 {
-    if (control_mode == 1)
-    {   
-        // led_green_start();
-        float temp_vcx, temp_wc;
-        snprintf(record_input_buffer, sizeof(record_input_buffer), "%s", input_data);
+  DriveCommand command;
+  float linear_mps;
+  float angular_radps;
+  char trailing;
 
-        // Attempt to parse the input data
-        if (sscanf(input_data, "vcx=%f,wc=%f\n", &temp_vcx, &temp_wc) == 2) {
-            // If parsing is successful, update Vcx and Wc
-            Vcx = temp_vcx;
-            Wc = temp_wc;
-            
-            // Parsing succeeded, exit the function
-        } 
-        else {      // If parsing fails, print an error message
-            // led_red_start();
-            snprintf(failed_input_buffer, sizeof(failed_input_buffer), "Failed input: %s", input_data);
-        }
-    }
+  if (input_data == NULL)
+  {
+    return;
+  }
+
+  if (sscanf(input_data, "vcx=%f,wc=%f %c", &linear_mps, &angular_radps, &trailing) != 2)
+  {
+    return;
+  }
+  if (!isfinite(linear_mps) || !isfinite(angular_radps))
+  {
+    return;
+  }
+
+  command.valid = true;
+  command.received_ms = HAL_GetTick();
+  command.linear_mps = linear_mps;
+  command.angular_radps = angular_radps;
+  DriveControl_SubmitSerialCommand(&command);
 }
-
-
-// void Serial_Control(void)
-// {
-//     if (new_serial_data_received) {
-//         // 解析串口输入的数据，更新 Vcx 和 Wc
-//         Serial_Input(input_buffer);
-        
-//         // 重置标志位
-//         new_serial_data_received = 0;
-//         memset(input_buffer, 0, BUFFER_SIZE);  // 清空接收缓冲区
-//     }
-// }
-
-
-void Serial_Control(void)
-{
-    // if (new_serial_data_received) {
-    //     new_serial_data_received = 0;
-
-    //     // 这里的 UART1_RX_Buffer[] 就是本次数据
-    //     UART1_RX_Buffer[UART1_RX_Size] = '\0';
-    //     Serial_Input((char*)UART1_RX_Buffer);
-
-    //     // 你也可在这里 memset(UART1_RX_Buffer, 0, UART_RX_BUF_SIZE);
-    // }
-}
-
 /* USER CODE END 4 */
 
 /**

@@ -1,157 +1,112 @@
 #include "Joystick.h"
+#include "led.h"
+#include "ps2.h"
 
-#define max_count 3
-float MAX_rotate_Speed = 1;
-float Max_speed[max_count] = {0.5, 1, 2, 3, 4, 5};
+#define SPEED_LEVEL_COUNT 6
+#define GAMEPAD_LY_CENTRE 128u
+#define GAMEPAD_RX_CENTRE 127u
+
+float MAX_rotate_Speed = 1.0f;
+float Max_speed[SPEED_LEVEL_COUNT] = {0.5f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f};
+float MAX_Speed = 0.5f;
 int speed_count = 0;
 
-extern int control_mode; 
-extern float Vcx;
-extern float Wc;
-extern int motor_ready;
-extern int motor_shutdown;
-extern int free_flag;
-extern int brake_flag;
-
-float MAX_Speed = 0;
-int flagg = 0;
- 
-void Joystick_motor_start(void)
+static bool ButtonPressedEdge(const GamepadFrame *frame, uint16_t button_mask)
 {
-    // 检测是否按下 R2（键码 9）
-    if (PS2_KEY == 9)
-    {
-        control_mode = 1; // 切换到串口控制模式
-        led_blue_blink();
-    }
-
-    if (PS2_KEY == 10)
-    {
-        control_mode = 0; // 切换到手柄控制模式
-        led_red_blink();
-    }
-
-    // 处理Y按钮，电机使能
-    if(PS2_KEY == 13 && PS2_LY == 128 && PS2_RX == 127)  //Y������ң�� �̵���
-	{
-
-		motor_shutdown = 0; //电机使能
-        led_green_start();
-        motor_ready = 1;
-        free_flag = 0;
-        brake_flag = 0;
-	}
-
-    // 处理X按钮关闭
-    if (PS2_KEY == 16 || 
-        ((PS2_LY == 255) && (PS2_LX == 255) && (PS2_RX == 255) && (PS2_RY == 255)) || 
-        ((PS2_LY == 128) && (PS2_LX == 128) && (PS2_RX == 128) && (PS2_RY == 128))) // X按钮关闭
-    {
-        control_mode = 0;
-        brake_flag = 0;
-        motor_shutdown = 1; //设置电机不使能
-        motor_ready = 0;   // 电机不准备好输入
-        free_flag = 1;     // 进入自由滑行模式
-        Set_free();
-        led_red_start();
-    }
-
-    if (PS2_KEY == 14) // B按钮按下急停
-    {
-        control_mode = 0;
-        motor_shutdown = 0; // Keep motors enabled for active braking
-        motor_ready = 0;    // Lock out stick speed updates
-        free_flag = 0;      // Do not coast until braking reaches near zero speed
-        Vcx = 0;
-        Wc = 0;
-        if (brake_flag == 0)
-        {
-            brake_flag = 1;
-            Clear_Brake_State();
-        }
-        Active_Brake_Output();
-        led_pink_start();
-    }
+    return frame != 0 && (frame->buttons_pressed & button_mask) != 0u;
 }
 
-void Joystick_v_set(void)
+void Joystick_v_set(const GamepadFrame *frame)
 {
-    if (PS2_KEY == 5)
+    if (ButtonPressedEdge(frame, GAMEPAD_BUTTON_DPAD_UP))
     {
-        if (!flagg)
+        if (speed_count < (SPEED_LEVEL_COUNT - 1))
         {
-            if (speed_count < max_count - 1)
-            {
-                speed_count += 1;
-            }
-            flagg = 1;
+            speed_count++;
         }
     }
 
-    if (PS2_KEY == 7)
+    if (ButtonPressedEdge(frame, GAMEPAD_BUTTON_DPAD_DOWN))
     {
-        if (!flagg)
+        if (speed_count > 0)
         {
-            if (speed_count > 0)
-            {
-                speed_count -= 1;
-            }
-            flagg = 1;
+            speed_count--;
         }
-    }
-
-    if (PS2_KEY == 0)
-    {
-        flagg = 0;
     }
 
     MAX_Speed = Max_speed[speed_count];
 }
 
-void Joystick_motor_control(void)
+static void SubmitGamepadCommand(const GamepadFrame *frame)
 {
-    PS2_Receive(); // 接收手柄数据
-    Joystick_v_set();
-    Joystick_motor_start();
+    DriveCommand command = {
+        .valid = true,
+        .received_ms = frame->received_ms,
+        .linear_mps = DriveControl_MapAxis(frame->ly,
+                                           GAMEPAD_LY_CENTRE,
+                                           MAX_Speed),
+        .angular_radps = DriveControl_MapAxis(frame->rx,
+                                             GAMEPAD_RX_CENTRE,
+                                             MAX_rotate_Speed),
+    };
 
-    // 只有在手柄控制模式且motor_shutdown == 0下，才从手柄更新 Vcx 和 Wc
-    if (control_mode == 0)
+    DriveControl_SubmitGamepadCommand(&command);
+}
+
+static void SubmitGamepadEvents(const GamepadFrame *frame)
+{
+    if (ButtonPressedEdge(frame, GAMEPAD_BUTTON_L2))
     {
-        if (motor_ready == 1 && motor_shutdown == 0 )
-        {
-            // 更新 Vcx
-            if (PS2_LY <= 128)
-            {
-                Vcx = (float)(MAX_Speed - 0) / (float)(0 - 128) * (PS2_LY - 128);
-            }
-            else
-            {
-                Vcx = (float)(MAX_Speed - 0) / (float)(0 - 127) * (PS2_LY - 128);
-            }
-
-            if (Vcx > MAX_Speed)
-                Vcx = MAX_Speed;
-            if (Vcx < -MAX_Speed)
-                Vcx = -MAX_Speed;
-        }
-
-        if (motor_ready == 1 && motor_shutdown == 0)
-        {
-            // 更新 Wc
-            if (PS2_RX <= 127)
-            {
-                Wc = (float)(MAX_rotate_Speed - 0) / (float)(0 - 127) * (PS2_RX - 127);
-            }
-            else if (PS2_RX > 127)
-            {
-                Wc = (float)(MAX_rotate_Speed - 0) / (float)(0 - 128) * (PS2_RX - 127);
-            }
-
-            if (Wc > MAX_rotate_Speed)
-                Wc = MAX_rotate_Speed;
-            if (Wc < -MAX_rotate_Speed)
-                Wc = -MAX_rotate_Speed;  
-        }
+        DriveControl_RequestSource(DRIVE_SOURCE_SERIAL, frame->received_ms);
     }
 
+    if (ButtonPressedEdge(frame, GAMEPAD_BUTTON_R2))
+    {
+        DriveControl_RequestSource(DRIVE_SOURCE_GAMEPAD, frame->received_ms);
+    }
+
+    if (ButtonPressedEdge(frame, GAMEPAD_BUTTON_Y))
+    {
+        DriveControl_RequestArm(frame);
+    }
+
+    if (ButtonPressedEdge(frame, GAMEPAD_BUTTON_B))
+    {
+        DriveControl_RequestBrake(frame->received_ms);
+    }
+}
+
+static void UpdateJoystickLed(void)
+{
+    switch (DriveControl_GetState())
+    {
+    case DRIVE_STATE_ESTOP:
+    case DRIVE_STATE_DISARMED:
+        led_red_start();
+        break;
+    case DRIVE_STATE_BRAKING:
+        led_pink_start();
+        break;
+    case DRIVE_STATE_ARMED:
+        led_green_start();
+        break;
+    default:
+        break;
+    }
+}
+
+void Joystick_motor_control(void)
+{
+    GamepadFrame frame;
+
+    if (!PS2_ReadFrame(&frame))
+    {
+        return;
+    }
+
+    DriveControl_SubmitGamepadFrame(&frame);
+    Joystick_v_set(&frame);
+    SubmitGamepadCommand(&frame);
+    SubmitGamepadEvents(&frame);
+    UpdateJoystickLed();
 }

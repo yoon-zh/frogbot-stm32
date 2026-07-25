@@ -44,6 +44,7 @@ extern uint8_t DMA_RX_Buffer[DMA_RX_BUF_SIZE];
 extern uint8_t UART1_RX_Buffer[UART_RX_BUF_SIZE];
 extern volatile uint16_t UART1_RX_Size;
 extern volatile uint8_t new_serial_data_received;
+static volatile uint8_t uart1_rx_overflow = 0u;
 
 // void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 // {
@@ -73,23 +74,18 @@ void USART1_IRQHandler(void)
     if (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_IDLE) != RESET) {
         __HAL_UART_CLEAR_IDLEFLAG(&huart1); // 清除标志
 
-        // 停止本次 DMA
+        // Stop DMA before examining the received length.
         HAL_UART_DMAStop(&huart1);
 
-        // 本次接收了多少字节
+        // IDLE is the only event that publishes a variable-length command.
         uint16_t dataLength = DMA_RX_BUF_SIZE - __HAL_DMA_GET_COUNTER(&hdma_usart1_rx);
-
-        // 拷贝到安全地方
-        if (dataLength) {
-            // 如果超过 UART1_RX_Buffer 能力，需自行处理
-            if (dataLength <= UART_RX_BUF_SIZE) {
-                memcpy(UART1_RX_Buffer, DMA_RX_Buffer, dataLength);
-                UART1_RX_Size = dataLength;
-                new_serial_data_received = 1; // 告知主循环或任务“有数据了”
-            }
+        if (uart1_rx_overflow == 0u && dataLength > 0u && dataLength < UART_RX_BUF_SIZE) {
+            memcpy(UART1_RX_Buffer, DMA_RX_Buffer, dataLength);
+            UART1_RX_Size = dataLength;
+            new_serial_data_received = 1;
         }
 
-        // 重新开始 DMA，等待下一批数据
+        uart1_rx_overflow = 0u;
         HAL_UART_Receive_DMA(&huart1, DMA_RX_Buffer, DMA_RX_BUF_SIZE);
     }
 
@@ -99,12 +95,14 @@ void USART1_IRQHandler(void)
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
-    // 数据接收完成，标记为新数据
-    new_serial_data_received = 1;
+    if (huart->Instance != USART1)
+    {
+        return;
+    }
 
-    led_green_start();
-    // 继续接收数据
-    // HAL_UART_Receive_DMA(&huart1, (uint8_t *)input_buffer, BUFFER_SIZE);
+    // A full DMA buffer has no IDLE-delimited packet boundary. The IDLE ISR
+    // discards this overflow and is the only path that restarts DMA.
+    uart1_rx_overflow = 1u;
 }
 
 
