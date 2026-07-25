@@ -25,6 +25,7 @@
 !Drivers/**/*.h
 
 !test/
+!test/**/*.c
 !test/**/*.py
 
 # Never publish documentation, generated binaries, IDE build outputs, or caches.

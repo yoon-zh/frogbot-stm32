@@ -23,6 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "headfile.h"
+#include "drive_control.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -39,12 +40,6 @@
 /* USER CODE BEGIN PM */
 
 /* USER CODE END PM */
-
-/* Private variables ---------------------------------------------------------*/
-/* USER CODE BEGIN PV */
-int stop_flag = 0;
-
-/* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN PFP */
@@ -219,10 +214,7 @@ void EXTI0_IRQHandler(void)
   /* USER CODE END EXTI0_IRQn 0 */
   HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_0);
   /* USER CODE BEGIN EXTI0_IRQn 1 */
-	//�����жϷ�����
-	stop_flag = 1;
-	
-	
+  DriveControl_LatchEmergencyStopFromISR();
   /* USER CODE END EXTI0_IRQn 1 */
 }
 

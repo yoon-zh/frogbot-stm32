@@ -1,288 +1,237 @@
-//ps2.c
-//2023.10.20
-//by gjx
-//MOSI��CMD MISO��DAT
+// PS2 transport. This module exposes only validated complete frames.
 #include "ps2.h"
+#include "ps2_frame.h"
+#include "user_delay.h"
+#include "user_usart.h"
 
-#define DELAY_TIME HAL_Delay_us(10);
+#define DI HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_14)
+#define DO_H HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_SET)
+#define DO_L HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, GPIO_PIN_RESET)
+#define CS_H HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_SET)
+#define CS_L HAL_GPIO_WritePin(GPIOB, GPIO_PIN_12, GPIO_PIN_RESET)
+#define CLK_H HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET)
+#define CLK_L HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET)
 
-int PS2_LX, PS2_LY, PS2_RX, PS2_RY, PS2_KEY; //
-uint16_t Handkey;
-uint8_t Comd[2] = {0x01, 0x42};											  //��ʼ�����������
-uint8_t Data[9] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}; //���ݴ洢����
-uint16_t MASK[] = {
-	PSB_SELECT,
-	PSB_L3,
-	PSB_R3,
-	PSB_START,
-	PSB_PAD_UP,
-	PSB_PAD_RIGHT,
-	PSB_PAD_DOWN,
-	PSB_PAD_LEFT,
-	PSB_L2,
-	PSB_R2,
-	PSB_L1,
-	PSB_R1,
-	PSB_GREEN,
-	PSB_RED,
-	PSB_BLUE,
-	PSB_PINK}; //����ֵ�밴����
+#define PS2_CLOCK_DELAY_US 10u
 
-//���ֱ���������
-void PS2_Cmd(uint8_t CMD)
+static uint8_t latest_response[PS2_FRAME_LENGTH] = {0};
+static uint16_t last_pressed_buttons = 0u;
+static GamepadFrame latest_frame = {0};
+
+static uint8_t PS2_Transfer(uint8_t command)
 {
-	volatile uint16_t ref = 0x01;
-	Data[1] = 0;
-	for (ref = 0x01; ref < 0x0100; ref <<= 1)
-	{
-		if (ref & CMD)
-		{
-			DO_H; //���һλ����λ
-		}
-		else
-			DO_L;
+    uint8_t response = 0u;
 
-		CLK_H; //ʱ������
-		DELAY_TIME;
-		CLK_L;
-		DELAY_TIME;
-		CLK_H;
-		if (DI)
-			Data[1] = ref | Data[1];
-	}
-	HAL_Delay_us(16);
+    for (uint16_t bit = 0x01u; bit < 0x0100u; bit <<= 1)
+    {
+        if ((command & bit) != 0u)
+        {
+            DO_H;
+        }
+        else
+        {
+            DO_L;
+        }
+
+        CLK_H;
+        HAL_Delay_us(PS2_CLOCK_DELAY_US);
+        CLK_L;
+        HAL_Delay_us(PS2_CLOCK_DELAY_US);
+        CLK_H;
+        if (DI == GPIO_PIN_SET)
+        {
+            response = (uint8_t)(response | bit);
+        }
+    }
+    HAL_Delay_us(16u);
+    return response;
 }
 
-//�ж��Ƿ�Ϊ���ģʽ  0x41=ģ���̵�  0x73=ģ����
-//����ֵ��0�����ģʽ
-//		  ����������ģʽ
+static void PS2_ReadRawFrame(uint8_t response[PS2_FRAME_LENGTH])
+{
+    CS_L;
+    HAL_Delay_us(16u);
+    response[0] = PS2_Transfer(0x01u);
+    response[1] = PS2_Transfer(0x42u);
+    for (uint8_t index = 2u; index < PS2_FRAME_LENGTH; index++)
+    {
+        response[index] = PS2_Transfer(0x00u);
+    }
+    CS_H;
+    HAL_Delay_us(16u);
+}
+
 uint8_t PS2_RedLight(void)
 {
-	CS_L;
-	PS2_Cmd(Comd[0]); //��ʼ����
-	PS2_Cmd(Comd[1]); //��������
-	CS_H;
-	if (Data[1] == 0X73)
-		return 0;
-	else
-		return 1;
+    uint8_t response_type;
+
+    CS_L;
+    HAL_Delay_us(16u);
+    (void)PS2_Transfer(0x01u);
+    response_type = PS2_Transfer(0x42u);
+    CS_H;
+    HAL_Delay_us(16u);
+    return (response_type == 0x73u) ? 0u : 1u;
 }
 
-//��ȡ�ֱ�����
-void PS2_ReadData(void)
+bool PS2_ReadFrame(GamepadFrame *frame)
 {
-	volatile uint8_t byte = 0;
-	volatile uint16_t ref = 0x01;
-	CS_L;
-	PS2_Cmd(Comd[0]);				 //��ʼ����
-	PS2_Cmd(Comd[1]);				 //��������
-	for (byte = 2; byte < 9; byte++) //��ʼ��������
-	{
-		for (ref = 0x01; ref < 0x100; ref <<= 1)
-		{
-			CLK_H;
-			DELAY_TIME;
-			CLK_L;
-			DELAY_TIME;
-			CLK_H;
-			if (DI)
-				Data[byte] = ref | Data[byte];
-		}
-		HAL_Delay_us(16);
-	}
-	CS_H;
+    uint16_t current_pressed_buttons;
+
+    if (frame == 0)
+    {
+        return false;
+    }
+
+    PS2_ReadRawFrame(latest_response);
+    if (!PS2_DecodeGamepadFrame(latest_response,
+                                sizeof(latest_response),
+                                HAL_GetTick(),
+                                last_pressed_buttons,
+                                frame,
+                                &current_pressed_buttons))
+    {
+        frame->valid = false;
+        return false;
+    }
+
+    last_pressed_buttons = current_pressed_buttons;
+    latest_frame = *frame;
+    return true;
 }
 
-//�Զ�������PS2�����ݽ��д���      ֻ�����˰�������         Ĭ�������Ǻ��ģʽ  ֻ��һ����������ʱ
-//����Ϊ0�� δ����Ϊ1
-uint8_t PS2_DataKey()
+static void PS2_ShortPoll(void)
 {
-	uint8_t index;
-
-	PS2_ClearData();
-	PS2_ReadData();
-
-	Handkey = (Data[4] << 8) | Data[3]; //����16������  ����Ϊ0�� δ����Ϊ1
-	for (index = 0; index < 16; index++)
-	{
-		if ((Handkey & (1 << (MASK[index] - 1))) == 0)
-			return index + 1;
-	}
-	return 0; //û���κΰ�������
+    CS_L;
+    HAL_Delay_us(16u);
+    (void)PS2_Transfer(0x01u);
+    (void)PS2_Transfer(0x42u);
+    (void)PS2_Transfer(0x00u);
+    (void)PS2_Transfer(0x00u);
+    (void)PS2_Transfer(0x00u);
+    CS_H;
+    HAL_Delay_us(16u);
 }
 
-//�õ�һ��ҡ�˵�ģ����	 ��Χ0~256
-uint8_t PS2_AnologData(uint8_t button)
+static void PS2_EnterConfig(void)
 {
-	return Data[button];
+    CS_L;
+    HAL_Delay_us(16u);
+    (void)PS2_Transfer(0x01u);
+    (void)PS2_Transfer(0x43u);
+    (void)PS2_Transfer(0x00u);
+    (void)PS2_Transfer(0x01u);
+    (void)PS2_Transfer(0x00u);
+    (void)PS2_Transfer(0x00u);
+    (void)PS2_Transfer(0x00u);
+    (void)PS2_Transfer(0x00u);
+    (void)PS2_Transfer(0x00u);
+    CS_H;
+    HAL_Delay_us(16u);
 }
 
-//������ݻ�����
-void PS2_ClearData()
+static void PS2_EnableAnalogMode(void)
 {
-	uint8_t a;
-	for (a = 0; a < 9; a++)
-		Data[a] = 0x00;
+    CS_L;
+    (void)PS2_Transfer(0x01u);
+    (void)PS2_Transfer(0x44u);
+    (void)PS2_Transfer(0x00u);
+    (void)PS2_Transfer(0x01u);
+    (void)PS2_Transfer(0x03u);
+    (void)PS2_Transfer(0x00u);
+    (void)PS2_Transfer(0x00u);
+    (void)PS2_Transfer(0x00u);
+    (void)PS2_Transfer(0x00u);
+    CS_H;
+    HAL_Delay_us(16u);
 }
 
-//void delay_init(uint8_t SYSCLK)
-//{
-//	SysTick->CTRL&=0xfffffffb;//bit2���,ѡ���ⲿʱ��  HCLK/8
-//	fac_us=SYSCLK/8;
-//}
-
-//void HAL_Delay_us(uint32_t nus)
-//{
-//	uint32_t temp;
-//	SysTick->LOAD=nus*fac_us; //ʱ�����
-//	SysTick->VAL=0x00;        //��ռ�����
-//	SysTick->CTRL=0x01 ;      //��ʼ����
-//	do
-//	{
-//		temp=SysTick->CTRL;
-//	}
-//	while(temp&0x01&&!(temp&(1<<16)));//�ȴ�ʱ�䵽��
-//	SysTick->CTRL=0x00;       //�رռ�����
-//	SysTick->VAL =0X00;       //��ռ�����
-//}
-
-//short poll
-void PS2_ShortPoll(void)
+static void PS2_EnableVibration(void)
 {
-	CS_L;
-	HAL_Delay_us(16);
-	PS2_Cmd(0x01);
-	PS2_Cmd(0x42);
-	PS2_Cmd(0X00);
-	PS2_Cmd(0x00);
-	PS2_Cmd(0x00);
-	CS_H;
-	HAL_Delay_us(16);
+    CS_L;
+    HAL_Delay_us(16u);
+    (void)PS2_Transfer(0x01u);
+    (void)PS2_Transfer(0x4Du);
+    (void)PS2_Transfer(0x00u);
+    (void)PS2_Transfer(0x00u);
+    (void)PS2_Transfer(0x01u);
+    CS_H;
+    HAL_Delay_us(16u);
 }
 
-//��������
-void PS2_EnterConfing(void)
+static void PS2_ExitConfig(void)
 {
-	CS_L;
-	HAL_Delay_us(16);
-	PS2_Cmd(0x01);
-	PS2_Cmd(0x43);
-	PS2_Cmd(0X00);
-	PS2_Cmd(0x01);
-	PS2_Cmd(0x00);
-	PS2_Cmd(0X00);
-	PS2_Cmd(0X00);
-	PS2_Cmd(0X00);
-	PS2_Cmd(0X00);
-	CS_H;
-	HAL_Delay_us(16);
+    CS_L;
+    HAL_Delay_us(16u);
+    (void)PS2_Transfer(0x01u);
+    (void)PS2_Transfer(0x43u);
+    (void)PS2_Transfer(0x00u);
+    (void)PS2_Transfer(0x00u);
+    (void)PS2_Transfer(0x5Au);
+    (void)PS2_Transfer(0x5Au);
+    (void)PS2_Transfer(0x5Au);
+    (void)PS2_Transfer(0x5Au);
+    (void)PS2_Transfer(0x5Au);
+    CS_H;
+    HAL_Delay_us(16u);
 }
 
-//����ģʽ����
-void PS2_TurnOnAnalogMode(void)
-{
-	CS_L;
-	PS2_Cmd(0x01);
-	PS2_Cmd(0x44);
-	PS2_Cmd(0X00);
-	PS2_Cmd(0x01); //analog=0x01;digital=0x00  �������÷���ģʽ
-	PS2_Cmd(0x03); //Ox03�������ã�������ͨ��������MODE������ģʽ��
-				   //0xEE�������������ã���ͨ��������MODE������ģʽ��
-	PS2_Cmd(0X00);
-	PS2_Cmd(0X00);
-	PS2_Cmd(0X00);
-	PS2_Cmd(0X00);
-	CS_H;
-	HAL_Delay_us(16);
-}
-
-//������
-void PS2_VibrationMode(void)
-{
-	CS_L;
-	HAL_Delay_us(16);
-	PS2_Cmd(0x01);
-	PS2_Cmd(0x4D);
-	PS2_Cmd(0X00);
-	PS2_Cmd(0x00);
-	PS2_Cmd(0X01);
-	CS_H;
-	HAL_Delay_us(16);
-}
-
-//��ɲ���������
-void PS2_ExitConfing(void)
-{
-	CS_L;
-	HAL_Delay_us(16);
-	PS2_Cmd(0x01);
-	PS2_Cmd(0x43);
-	PS2_Cmd(0X00);
-	PS2_Cmd(0x00);
-	PS2_Cmd(0x5A);
-	PS2_Cmd(0x5A);
-	PS2_Cmd(0x5A);
-	PS2_Cmd(0x5A);
-	PS2_Cmd(0x5A);
-	CS_H;
-	HAL_Delay_us(16);
-}
-
-//�ֱ����ó�ʼ��
 void PS2_SetInit(void)
 {
-	motor_ready = false;
-	PS2_ShortPoll();
-	PS2_ShortPoll();
-	PS2_ShortPoll();
-	PS2_EnterConfing();		//��������ģʽ
-	PS2_TurnOnAnalogMode(); //�����̵ơ�����ģʽ����ѡ���Ƿ񱣴�
-	PS2_VibrationMode();	//������ģʽ
-	PS2_ExitConfing(); //��ɲ���������
+    PS2_ShortPoll();
+    PS2_ShortPoll();
+    PS2_ShortPoll();
+    PS2_EnterConfig();
+    PS2_EnableAnalogMode();
+    PS2_EnableVibration();
+    PS2_ExitConfig();
 }
 
-/******************************************************
-Function:    void PS2_Vibration(u8 motor1, u8 motor2)
-Description: �ֱ��𶯺�����
-Calls:		 void PS2_Cmd(u8 CMD);
-Input: motor1:�Ҳ�С�𶯵�� 0x00�أ�������
-	   motor2:�����𶯵�� 0x40~0xFF �������ֵԽ�� ��Խ��
-******************************************************/
 void PS2_Vibration(uint8_t motor1, uint8_t motor2)
 {
-	CS_L;
-	HAL_Delay_us(16);
-	PS2_Cmd(0x01); //��ʼ����
-	PS2_Cmd(0x42); //��������
-	PS2_Cmd(0X00);
-	PS2_Cmd(motor1);
-	PS2_Cmd(motor2);
-	PS2_Cmd(0X00);
-	PS2_Cmd(0X00);
-	PS2_Cmd(0X00);
-	PS2_Cmd(0X00);
-	CS_H;
-	HAL_Delay_us(16);
+    CS_L;
+    HAL_Delay_us(16u);
+    (void)PS2_Transfer(0x01u);
+    (void)PS2_Transfer(0x42u);
+    (void)PS2_Transfer(0x00u);
+    (void)PS2_Transfer(motor1);
+    (void)PS2_Transfer(motor2);
+    (void)PS2_Transfer(0x00u);
+    (void)PS2_Transfer(0x00u);
+    (void)PS2_Transfer(0x00u);
+    (void)PS2_Transfer(0x00u);
+    CS_H;
+    HAL_Delay_us(16u);
 }
 
-//��ȡ�ֱ���Ϣ
-void PS2_Receive(void)
-{
-	PS2_LX = PS2_AnologData(PSS_LX);  //left-0       mid-127      right-255 
-	PS2_LY = PS2_AnologData(PSS_LY);  //forward-0    mid-128      backward-255
-	PS2_RX = PS2_AnologData(PSS_RX);  //left-0       mid-127      right-255 
-	PS2_RY = PS2_AnologData(PSS_RY);  //forward-0    mid-128      backward-255
-	PS2_KEY = PS2_DataKey();  //up-5 right-6 donw-7 left-8 donw-7 //Y-13 B-14 A-15 X-16 //L1-11 L2-9  R1-12 R2-10
-	
-}
 void PS2_print(void)
 {
-	usart_printf("\n PS2_LX:%d\n PS2_LY:%d\n PS2_RX:%d\n PS2_RY:%d\n PS2_KEY:%d\n Vcx:%d\n motor_ready:%d\n",PS2_LX,PS2_LY,PS2_RX,PS2_RY,PS2_KEY,Vcx,motor_ready);
+    if (!latest_frame.valid)
+    {
+        return;
+    }
 
+    usart_printf("\nPS2 lx:%u ly:%u rx:%u ry:%u buttons:%04x\n",
+                 latest_frame.lx,
+                 latest_frame.ly,
+                 latest_frame.rx,
+                 latest_frame.ry,
+                 latest_frame.buttons);
 }
 
 void PS2_Vofa_print(void)
 {
-	usart_printf("%d,%d,%d,%d,%d,%f,%f,%d,%d,%d\n",PS2_LX,PS2_LY,PS2_RX,PS2_RY,PS2_KEY,Vcx,Wc,motor_ready,set_spdL,set_spdR);
+    if (!latest_frame.valid)
+    {
+        return;
+    }
 
+    usart_printf("%u,%u,%u,%u,%u,%u,%u\n",
+                 latest_frame.lx,
+                 latest_frame.ly,
+                 latest_frame.rx,
+                 latest_frame.ry,
+                 latest_frame.buttons,
+                 latest_frame.buttons_pressed,
+                 latest_frame.buttons_released);
 }

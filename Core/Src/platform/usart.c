@@ -99,12 +99,15 @@ void USART1_IRQHandler(void)
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
-    // 数据接收完成，标记为新数据
-    new_serial_data_received = 1;
+    if (huart->Instance != USART1)
+    {
+        return;
+    }
 
-    led_green_start();
-    // 继续接收数据
-    // HAL_UART_Receive_DMA(&huart1, (uint8_t *)input_buffer, BUFFER_SIZE);
+    memcpy(UART1_RX_Buffer, DMA_RX_Buffer, DMA_RX_BUF_SIZE);
+    UART1_RX_Size = DMA_RX_BUF_SIZE;
+    new_serial_data_received = 1;
+    HAL_UART_Receive_DMA(&huart1, DMA_RX_Buffer, DMA_RX_BUF_SIZE);
 }
 
 
