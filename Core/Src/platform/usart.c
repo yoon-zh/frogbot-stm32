@@ -74,11 +74,13 @@ void USART1_IRQHandler(void)
     if (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_IDLE) != RESET) {
         __HAL_UART_CLEAR_IDLEFLAG(&huart1); // 清除标志
 
-        // Stop DMA before examining the received length.
+        // HAL_UART_DMAStop may reset the DMA counter. Capture the received
+        // length first so the IDLE-delimited command is not discarded.
+        uint16_t dmaRemaining = __HAL_DMA_GET_COUNTER(&hdma_usart1_rx);
         HAL_UART_DMAStop(&huart1);
 
         // IDLE is the only event that publishes a variable-length command.
-        uint16_t dataLength = DMA_RX_BUF_SIZE - __HAL_DMA_GET_COUNTER(&hdma_usart1_rx);
+        uint16_t dataLength = DMA_RX_BUF_SIZE - dmaRemaining;
         if (uart1_rx_overflow == 0u && dataLength > 0u && dataLength < UART_RX_BUF_SIZE) {
             memcpy(UART1_RX_Buffer, DMA_RX_Buffer, dataLength);
             UART1_RX_Size = dataLength;

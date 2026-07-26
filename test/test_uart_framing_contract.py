@@ -36,6 +36,13 @@ def test_idle_is_the_only_variable_length_packet_publisher() -> None:
     source = USART_SOURCE.read_text(encoding="utf-8", errors="ignore")
     handler = function_body(source, "USART1_IRQHandler")
 
+    capture_index = handler.index(
+        "uint16_t dmaRemaining = __HAL_DMA_GET_COUNTER(&hdma_usart1_rx);"
+    )
+    stop_index = handler.index("HAL_UART_DMAStop(&huart1);")
+    length_index = handler.index("uint16_t dataLength = DMA_RX_BUF_SIZE - dmaRemaining;")
+
+    assert capture_index < stop_index < length_index
     assert "uart1_rx_overflow == 0u" in handler
     assert "dataLength > 0u" in handler
     assert "dataLength < UART_RX_BUF_SIZE" in handler
