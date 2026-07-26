@@ -109,13 +109,22 @@ static void TestArmAndSourceSwitchOrdering(void)
     assert(DriveControl_GetOutput().authorised);
 }
 
-static void TestTimeoutsApplyOnlyToActiveSource(void)
+static void TestTimeoutStopsMotionButKeepsControllerArmed(void)
 {
     DriveControl_Init(0u);
     ArmSerial(1u);
     DriveControl_Tick(252u, false);
-    assert(DriveControl_GetState() == DRIVE_STATE_DISARMED);
+    assert(DriveControl_GetState() == DRIVE_STATE_ARMED);
     assert(!DriveControl_GetOutput().authorised);
+
+    DriveControl_SubmitSerialCommand(&(DriveCommand){
+        .valid = true,
+        .received_ms = 253u,
+        .linear_mps = 0.4f,
+        .angular_radps = -0.2f,
+    });
+    DriveControl_Tick(253u, false);
+    assert(DriveControl_GetOutput().authorised);
 
     DriveControl_Init(0u);
     ArmSerial(1u);
@@ -130,27 +139,22 @@ static void TestTimeoutsApplyOnlyToActiveSource(void)
     assert(DriveControl_GetOutput().authorised);
 
     DriveControl_Tick(399u, false);
-    assert(DriveControl_GetState() == DRIVE_STATE_DISARMED);
+    assert(DriveControl_GetState() == DRIVE_STATE_ARMED);
+    assert(!DriveControl_GetOutput().authorised);
 }
 
-static void TestRearmRequiresPostArmCommand(void)
+static void TestFreshCommandResumesWithoutAnotherArmRequest(void)
 {
-    GamepadFrame arm_frame = GamepadFrameAt(253u, 128u, 127u);
-    DriveCommand command = CommandAt(254u, 0.4f, -0.2f);
+    DriveCommand command = CommandAt(253u, 0.4f, -0.2f);
 
     DriveControl_Init(0u);
     ArmSerial(1u);
     DriveControl_Tick(252u, false);
-    assert(DriveControl_GetState() == DRIVE_STATE_DISARMED);
-
-    DriveControl_SubmitGamepadFrame(&arm_frame);
-    DriveControl_RequestArm(&arm_frame);
-    DriveControl_Tick(253u, false);
     assert(DriveControl_GetState() == DRIVE_STATE_ARMED);
     assert(!DriveControl_GetOutput().authorised);
 
     DriveControl_SubmitSerialCommand(&command);
-    DriveControl_Tick(254u, false);
+    DriveControl_Tick(253u, false);
     assert(DriveControl_GetOutput().authorised);
 }
 
@@ -296,8 +300,8 @@ int main(void)
     TestInvalidGamepadCannotChangeSerial();
     TestSwitchNeedsPostSwitchCommand();
     TestArmAndSourceSwitchOrdering();
-    TestTimeoutsApplyOnlyToActiveSource();
-    TestRearmRequiresPostArmCommand();
+    TestTimeoutStopsMotionButKeepsControllerArmed();
+    TestFreshCommandResumesWithoutAnotherArmRequest();
     TestBrakingAndEstopRejectOtherRequests();
     TestNeutralBandAndAxisMapping();
     TestPs2FrameValidationAndEdges();

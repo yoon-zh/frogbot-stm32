@@ -10,6 +10,7 @@ typedef struct {
     DriveCommand serial_command;
     uint32_t last_gamepad_frame_ms;
     uint32_t source_gate_ms;
+    uint32_t last_tick_ms;
     bool gamepad_frame_seen;
     bool source_request_pending;
     DriveSource requested_source;
@@ -170,6 +171,8 @@ void DriveControl_LatchEmergencyStopFromISR(void)
 
 void DriveControl_Tick(uint32_t now_ms, bool brake_wheels_stopped)
 {
+    drive_control.last_tick_ms = now_ms;
+
     if (drive_control.estop_pending != 0u)
     {
         drive_control.state = DRIVE_STATE_ESTOP;
@@ -183,11 +186,7 @@ void DriveControl_Tick(uint32_t now_ms, bool brake_wheels_stopped)
         return;
     }
 
-    if (drive_control.state == DRIVE_STATE_ARMED && ActiveSourceTimedOut(now_ms))
-    {
-        EnterDisarmed(now_ms);
-    }
-    else if (drive_control.state == DRIVE_STATE_BRAKING && brake_wheels_stopped)
+    if (drive_control.state == DRIVE_STATE_BRAKING && brake_wheels_stopped)
     {
         EnterDisarmed(now_ms);
     }
@@ -231,7 +230,8 @@ DriveControlOutput DriveControl_GetOutput(void)
         .angular_radps = 0.0f,
     };
 
-    if (drive_control.state != DRIVE_STATE_ARMED)
+    if (drive_control.state != DRIVE_STATE_ARMED ||
+        ActiveSourceTimedOut(drive_control.last_tick_ms))
     {
         return output;
     }
