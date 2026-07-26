@@ -144,11 +144,10 @@ int main(void)
  
 //  TaskAdd(ParseGpsBuffer, 100); // 10Hz
 
-  // (1) Start DMA reception
-  HAL_UART_Receive_DMA(&huart1, DMA_RX_Buffer, DMA_RX_BUF_SIZE);
-
-  // (2) Enable the idle interrupt (IDLE interrupt)
-  __HAL_UART_ENABLE_IT(&huart1, UART_IT_IDLE);
+  if (USART1_StartReceiveToIdle() != HAL_OK)
+  {
+    Error_Handler();
+  }
 
   /* USER CODE END 2 */
 
@@ -167,12 +166,10 @@ int main(void)
       uint16_t input_size = UART1_RX_Size;
 
       new_serial_data_received = 0;
-      if (input_size >= UART_RX_BUF_SIZE)
+      if (input_size > 0u && input_size < UART_RX_BUF_SIZE)
       {
-        input_size = UART_RX_BUF_SIZE - 1u;
+        Serial_Input((const char *)UART1_RX_Buffer);
       }
-      UART1_RX_Buffer[input_size] = '\0';
-      Serial_Input((const char *)UART1_RX_Buffer);
     }
   }
 
