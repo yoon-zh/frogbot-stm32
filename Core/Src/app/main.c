@@ -62,7 +62,9 @@ uint16_t buffer_index = 0;
 
 extern FusionAhrs ahrs;
 
-int SERIAL_PERIOD_MS = 10; // 100HZ
+// A 16-float telemetry frame is roughly 200 bytes.  At 115200 baud it cannot
+// be sent reliably at 100 Hz, so leave headroom for incoming drive commands.
+#define SERIAL_PERIOD_MS 40u // 25 Hz telemetry
 
 /* USER CODE END PV */
 
@@ -134,7 +136,7 @@ int main(void)
   Init_all();
   clrStruct();
   
-  TaskAdd(Serial_Output, SERIAL_PERIOD_MS); // 100Hz Serial
+  TaskAdd(Serial_Output, SERIAL_PERIOD_MS); // 25 Hz serial telemetry
  
 
   TaskAdd(Speed_set, 5); // 200Hz for wheel PID
