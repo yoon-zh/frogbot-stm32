@@ -267,7 +267,10 @@ void Serial_Output(){
   //             (int)(FusionDegreesToRadians(gyroscope.axis.y) * 10000), 
   //             (int)(FusionDegreesToRadians(gyroscope.axis.z) * 10000));
 
-    usart_printf("%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f\n",
+    // Fields 1-16 are the legacy telemetry. Fields 17-19 (ctrl_mode, ps2_key,
+    // ps2_connected) are parsed by serial_reader and the FrogBoard server.
+    // ps2_key is not encoded by this firmware yet and is always 0.
+    usart_printf("%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%u,%u,%u\n",
                       x, y, z, // Position coordinates
                       Q.element.x,
                       Q.element.y,
@@ -280,7 +283,10 @@ void Serial_Output(){
 
                       magnetometer.axis.x,
                       magnetometer.axis.y,
-                      magnetometer.axis.z); // Magnetometer data
+                      magnetometer.axis.z, // Magnetometer data
+                      (unsigned int)DriveControl_GetCtrlMode(),
+                      0u,
+                      (unsigned int)(PS2_IsConnected() ? 1u : 0u));
 
   //  LongLat2XY(Convert_to_degrees(Save_Data.longitude),Convert_to_degrees(Save_Data.latitude),&gps_X,&gps_Y);
 //  LongLat2XY(120.742925,31.268221,&gps_X0,&gps_Y0);
@@ -319,29 +325,21 @@ void Serial_Output(){
 void Serial_Input(const char *input_data)
 {
   DriveCommand command;
-  float linear_mps;
-  float angular_radps;
-  char trailing;
+  uint8_t enable_code;
 
   if (input_data == NULL)
   {
     return;
   }
 
-  if (sscanf(input_data, "vcx=%f,wc=%f %c", &linear_mps, &angular_radps, &trailing) != 2)
-  {
-    return;
-  }
-  if (!isfinite(linear_mps) || !isfinite(angular_radps))
+  // Accepts "vcx=..,wc=.." and "vcx=..,wc=..,en=0|1|2" (see drive_control.h).
+  if (!DriveControl_ParseSerialPacket(input_data, HAL_GetTick(), &command, &enable_code))
   {
     return;
   }
 
-  command.valid = true;
-  command.received_ms = HAL_GetTick();
-  command.linear_mps = linear_mps;
-  command.angular_radps = angular_radps;
   DriveControl_SubmitSerialCommand(&command);
+  DriveControl_SubmitSerialEnable(enable_code, &command);
 }
 /* USER CODE END 4 */
 
