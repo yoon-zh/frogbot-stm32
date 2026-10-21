@@ -31,54 +31,46 @@ OPT = -Og
 # Build path
 BUILD_DIR = build
 
-# Increment this when the Core/Src layout changes.  A new layout stamp prevents
-# stale generated dependency files from referencing source paths that no longer
-# exist and forces one complete rebuild in the existing build directory.
-SOURCE_LAYOUT_VERSION = 3
-LAYOUT_STAMP = $(BUILD_DIR)/.source-layout-v$(SOURCE_LAYOUT_VERSION)
-
 ######################################
 # source
 ######################################
 # C sources
 C_SOURCES =  \
-Core/Src/app/main.c \
-Core/Src/app/Task.c \
-Core/Src/app/User_init.c \
-Core/Src/platform/bsp_can.c \
-Core/Src/platform/Joystick.c \
-Core/Src/platform/led.c \
-Core/Src/platform/ps2.c \
-Core/Src/platform/ps2_frame.c \
-Core/Src/platform/user_delay.c \
-Core/Src/platform/user_usart.c \
-Core/Src/platform/can.c \
-Core/Src/platform/dma.c \
-Core/Src/platform/gpio.c \
-Core/Src/platform/i2c.c \
-Core/Src/platform/spi.c \
-Core/Src/platform/stm32f4xx_hal_msp.c \
-Core/Src/platform/stm32f4xx_it.c \
-Core/Src/platform/syscalls.c \
-Core/Src/platform/sysmem.c \
-Core/Src/platform/system_stm32f4xx.c \
-Core/Src/platform/tim.c \
-Core/Src/platform/usart.c \
-Core/Src/service/CAN_receive.c \
-Core/Src/service/drive_control.c \
-Core/Src/service/gps.c \
-Core/Src/service/Motor_Speed_pid.c \
-Core/Src/service/pid.c \
-Core/Src/service/sweep.c \
-Core/Src/service/BMI088driver.c \
-Core/Src/service/BMI088Middleware.c \
-Core/Src/service/IMU.c \
-Core/Src/service/IST.c \
-Core/Src/service/ist8310driver_middleware.c \
-Core/Src/service/ist8310driver.c \
-Core/Src/service/FusionAhrs.c \
-Core/Src/service/FusionCompass.c \
-Core/Src/service/FusionOffset.c \
+Core/Src/BMI088driver.c \
+Core/Src/BMI088Middleware.c \
+Core/Src/bsp_can.c \
+Core/Src/CAN_receive.c \
+Core/Src/can.c \
+Core/Src/dma.c \
+Core/Src/FusionAhrs.c \
+Core/Src/FusionCompass.c \
+Core/Src/FusionOffset.c \
+Core/Src/gpio.c \
+Core/Src/gps.c \
+Core/Src/i2c.c \
+Core/Src/IMU.c \
+Core/Src/IST.c \
+Core/Src/ist8310driver_middleware.c \
+Core/Src/ist8310driver.c \
+Core/Src/Joystick.c \
+Core/Src/led.c \
+Core/Src/main.c \
+Core/Src/Motor_Speed_pid.c \
+Core/Src/pid.c \
+Core/Src/ps2.c \
+Core/Src/spi.c \
+Core/Src/stm32f4xx_hal_msp.c \
+Core/Src/stm32f4xx_it.c \
+Core/Src/sweep.c \
+Core/Src/syscalls.c \
+Core/Src/sysmem.c \
+Core/Src/system_stm32f4xx.c \
+Core/Src/Task.c \
+Core/Src/tim.c \
+Core/Src/usart.c \
+Core/Src/user_delay.c \
+Core/Src/User_init.c \
+Core/Src/user_usart.c \
 Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_can.c \
 Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_rcc.c \
 Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_rcc_ex.c \
@@ -206,11 +198,6 @@ vpath %.s $(sort $(dir $(ASM_SOURCES)))
 OBJECTS += $(addprefix $(BUILD_DIR)/,$(notdir $(ASMM_SOURCES:.S=.o)))
 vpath %.S $(sort $(dir $(ASMM_SOURCES)))
 
-$(OBJECTS): $(LAYOUT_STAMP)
-
-$(LAYOUT_STAMP): | $(BUILD_DIR)
-	@touch $@
-
 $(BUILD_DIR)/%.o: %.c Makefile | $(BUILD_DIR) 
 	$(CC) -c $(CFLAGS) -Wa,-a,-ad,-alms=$(BUILD_DIR)/$(notdir $(<:.c=.lst)) $< -o $@
 
@@ -241,8 +228,6 @@ clean:
 #######################################
 # dependencies
 #######################################
-ifneq ($(wildcard $(LAYOUT_STAMP)),)
 -include $(wildcard $(BUILD_DIR)/*.d)
-endif
 
 # *** EOF ***
