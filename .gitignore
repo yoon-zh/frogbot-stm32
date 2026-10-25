@@ -28,8 +28,7 @@
 !test/**/*.c
 !test/**/*.py
 
-# Never publish documentation, generated binaries, IDE build outputs, or caches.
-*.md
+# Never publish generated binaries, IDE build outputs, or caches.
 docs/
 build/
 MDK-ARM/
